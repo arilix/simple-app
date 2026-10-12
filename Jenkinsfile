@@ -8,22 +8,30 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout') {
             steps {
+                echo 'Mengambil source code dari GitHub...'
                 checkout scm
             }
         }
 
         stage('Build') {
             steps {
+                echo 'Memulai proses build di Windows...'
                 bat 'echo "Build di Windows"'
             }
         }
 
         stage('Build Docker Image') {
             steps {
+                echo 'Membangun Docker image...'
+
                 bat '''
+                    @echo off
+
                     "%DOCKER_EXE%" build -t "%IMAGE_NAME%:%BUILD_NUMBER%" .
+
                     if errorlevel 1 exit /b 1
                 '''
             }
@@ -31,6 +39,8 @@ pipeline {
 
         stage('Push Docker Image') {
             steps {
+                echo 'Login dan mengunggah Docker image ke Docker Hub...'
+
                 withCredentials([
                     usernamePassword(
                         credentialsId: 'dockerhub-credentials',
@@ -38,21 +48,51 @@ pipeline {
                         passwordVariable: 'DOCKER_PASS'
                     )
                 ]) {
-                    bat '''
-                        @echo off
+                    powershell '''
+                        $ErrorActionPreference = "Stop"
 
-                        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$env:DOCKER_PASS | & $env:DOCKER_EXE login --username $env:DOCKER_USER --password-stdin; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; exit 0"
+                        $docker = $env:DOCKER_EXE
+                        $username = $env:DOCKER_USER
+                        $password = $env:DOCKER_PASS
+                        $image = $env:IMAGE_NAME
+                        $tag = $env:BUILD_NUMBER
 
-                        if errorlevel 1 exit /b 1
+                        Write-Host "Login ke Docker Hub..."
 
-                        "%DOCKER_EXE%" push "%IMAGE_NAME%:%BUILD_NUMBER%"
-                        if errorlevel 1 exit /b 1
+                        $password | & $docker login `
+                            --username $username `
+                            --password-stdin
 
-                        "%DOCKER_EXE%" tag "%IMAGE_NAME%:%BUILD_NUMBER%" "%IMAGE_NAME%:latest"
-                        if errorlevel 1 exit /b 1
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Login Docker Hub gagal."
+                        }
 
-                        "%DOCKER_EXE%" push "%IMAGE_NAME%:latest"
-                        if errorlevel 1 exit /b 1
+                        Write-Host "Login berhasil."
+                        Write-Host "Push image dengan tag build..."
+
+                        & $docker push "${image}:${tag}"
+
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Push image dengan tag build gagal."
+                        }
+
+                        Write-Host "Memberikan tag latest..."
+
+                        & $docker tag "${image}:${tag}" "${image}:latest"
+
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Pemberian tag latest gagal."
+                        }
+
+                        Write-Host "Push image dengan tag latest..."
+
+                        & $docker push "${image}:latest"
+
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Push image latest gagal."
+                        }
+
+                        Write-Host "Semua image berhasil diunggah."
                     '''
                 }
             }
@@ -60,8 +100,19 @@ pipeline {
     }
 
     post {
+        success {
+            echo 'Pipeline berhasil!'
+            echo 'Docker image telah diunggah ke Docker Hub.'
+            echo 'Repository: https://hub.docker.com/r/riset321/simple-app'
+        }
+
+        failure {
+            echo 'Pipeline gagal. Periksa Console Output untuk detail error.'
+        }
+
         always {
-            echo 'Selesai build'
+            echo 'Pipeline selesai.'
+
             bat '''
                 @echo off
                 "%DOCKER_EXE%" logout
