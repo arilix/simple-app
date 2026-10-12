@@ -1,122 +1,90 @@
-pipeline {
-    agent any
+node {
+    def dockerExe = 'C:\\Users\\HP\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
+    def imageName = 'riset321/simple-app'
 
-    environment {
-        DOCKER_EXE = 'C:\\Users\\HP\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
-        IMAGE_NAME = 'riset321/simple-app'
-        REGISTRY_CREDENTIALS = 'dockerhub-credentials'
-    }
+    try {
+        stage('Checkout Application') {
+            echo 'Mengambil source code dari GitHub...'
 
-    stages {
-
-        stage('Checkout') {
-            steps {
-                echo 'Mengambil source code dari GitHub...'
-                checkout scm
+            dir('app') {
+                git branch: 'main',
+                    url: 'https://github.com/arilix/simple-app.git'
             }
         }
 
-        stage('Build') {
-            steps {
-                echo 'Memulai proses build di Windows...'
-                bat 'echo "Build di Windows"'
-            }
+        stage('Check Docker') {
+            echo 'Memeriksa Docker CLI dan Docker Engine...'
+
+            bat """
+                "${dockerExe}" --version
+                "${dockerExe}" info
+            """
         }
 
         stage('Build Docker Image') {
-            steps {
-                echo 'Membangun Docker image...'
+            echo 'Membangun Docker image...'
 
-                bat '''
-                    @echo off
-
-                    "%DOCKER_EXE%" build -t "%IMAGE_NAME%:%BUILD_NUMBER%" .
-
-                    if errorlevel 1 exit /b 1
-                '''
+            dir('app') {
+                bat """
+                    "${dockerExe}" build ^
+                    -t ${imageName}:latest ^
+                    -t ${imageName}:${env.BUILD_NUMBER} ^
+                    .
+                """
             }
         }
 
-        stage('Push Docker Image') {
-            steps {
-                echo 'Login dan mengunggah Docker image ke Docker Hub...'
+        stage('Login to Docker Hub') {
+            echo 'Login menggunakan credential Jenkins...'
 
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-credentials',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
-                    powershell '''
-                        $ErrorActionPreference = "Stop"
+            withCredentials([
+                usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKERHUB_USERNAME',
+                    passwordVariable: 'DOCKERHUB_PASSWORD'
+                )
+            ]) {
+                powershell """
+                    \$ErrorActionPreference = 'Stop'
 
-                        $docker = $env:DOCKER_EXE
-                        $username = $env:DOCKER_USER
-                        $password = $env:DOCKER_PASS
-                        $image = $env:IMAGE_NAME
-                        $tag = $env:BUILD_NUMBER
-
-                        Write-Host "Login ke Docker Hub..."
-
-                        $password | & $docker login `
-                            --username $username `
+                    \$env:DOCKERHUB_PASSWORD |
+                        & '${dockerExe}' login `
+                            --username \$env:DOCKERHUB_USERNAME `
                             --password-stdin
 
-                        if ($LASTEXITCODE -ne 0) {
-                            throw "Login Docker Hub gagal."
-                        }
-
-                        Write-Host "Login berhasil."
-                        Write-Host "Push image dengan tag build..."
-
-                        & $docker push "${image}:${tag}"
-
-                        if ($LASTEXITCODE -ne 0) {
-                            throw "Push image dengan tag build gagal."
-                        }
-
-                        Write-Host "Memberikan tag latest..."
-
-                        & $docker tag "${image}:${tag}" "${image}:latest"
-
-                        if ($LASTEXITCODE -ne 0) {
-                            throw "Pemberian tag latest gagal."
-                        }
-
-                        Write-Host "Push image dengan tag latest..."
-
-                        & $docker push "${image}:latest"
-
-                        if ($LASTEXITCODE -ne 0) {
-                            throw "Push image latest gagal."
-                        }
-
-                        Write-Host "Semua image berhasil diunggah."
-                    '''
-                }
+                    if (\$LASTEXITCODE -ne 0) {
+                        exit \$LASTEXITCODE
+                    }
+                """
             }
         }
-    }
 
-    post {
-        success {
-            echo 'Pipeline berhasil!'
-            echo 'Docker image telah diunggah ke Docker Hub.'
-            echo 'Repository: https://hub.docker.com/r/riset321/simple-app'
+        stage('Push to Docker Hub') {
+            echo 'Mengunggah Docker image ke Docker Hub...'
+
+            bat """
+                "${dockerExe}" push ${imageName}:latest
+                if errorlevel 1 exit /b 1
+
+                "${dockerExe}" push ${imageName}:${env.BUILD_NUMBER}
+                if errorlevel 1 exit /b 1
+            """
         }
 
-        failure {
-            echo 'Pipeline gagal. Periksa Console Output untuk detail error.'
+        stage('Verify Image') {
+            echo 'Memeriksa image yang tersedia secara lokal...'
+
+            bat """
+                "${dockerExe}" images ${imageName}
+            """
         }
 
-        always {
-            echo 'Pipeline selesai.'
+        currentBuild.result = 'SUCCESS'
+        echo 'CI/CD PIPELINE BERHASIL!'
 
-            bat '''
-                @echo off
-                "%DOCKER_EXE%" logout
-            '''
-        }
+    } catch (Exception e) {
+        currentBuild.result = 'FAILURE'
+        echo "Pipeline gagal: ${e.getMessage()}"
+        throw e
     }
 }
