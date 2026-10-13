@@ -1,90 +1,25 @@
-node {
-    def dockerExe = 'C:\\Users\\HP\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
-    def imageName = 'riset321/simple-app'
-
-    try {
-        stage('Checkout Application') {
-            echo 'Mengambil source code dari GitHub...'
-
-            dir('app') {
-                git branch: 'main',
-                    url: 'https://github.com/arilix/simple-app.git'
-            }
-        }
-
-        stage('Check Docker') {
-            echo 'Memeriksa Docker CLI dan Docker Engine...'
-
-            bat """
-                "${dockerExe}" --version
-                "${dockerExe}" info
-            """
-        }
-
-        stage('Build Docker Image') {
-            echo 'Membangun Docker image...'
-
-            dir('app') {
-                bat """
-                    "${dockerExe}" build ^
-                    -t ${imageName}:latest ^
-                    -t ${imageName}:${env.BUILD_NUMBER} ^
-                    .
-                """
-            }
-        }
-
-        stage('Login to Docker Hub') {
-            echo 'Login menggunakan credential Jenkins...'
-
-            withCredentials([
-                usernamePassword(
-                    credentialsId: 'dockerhub-credentials',
-                    usernameVariable: 'DOCKERHUB_USERNAME',
-                    passwordVariable: 'DOCKERHUB_PASSWORD'
-                )
-            ]) {
-                powershell """
-                    \$ErrorActionPreference = 'Stop'
-
-                    \$env:DOCKERHUB_PASSWORD |
-                        & '${dockerExe}' login `
-                            --username \$env:DOCKERHUB_USERNAME `
-                            --password-stdin
-
-                    if (\$LASTEXITCODE -ne 0) {
-                        exit \$LASTEXITCODE
-                    }
-                """
-            }
-        }
-
-        stage('Push to Docker Hub') {
-            echo 'Mengunggah Docker image ke Docker Hub...'
-
-            bat """
-                "${dockerExe}" push ${imageName}:latest
-                if errorlevel 1 exit /b 1
-
-                "${dockerExe}" push ${imageName}:${env.BUILD_NUMBER}
-                if errorlevel 1 exit /b 1
-            """
-        }
-
-        stage('Verify Image') {
-            echo 'Memeriksa image yang tersedia secara lokal...'
-
-            bat """
-                "${dockerExe}" images ${imageName}
-            """
-        }
-
-        currentBuild.result = 'SUCCESS'
-        echo 'CI/CD PIPELINE BERHASIL!'
-
-    } catch (Exception e) {
-        currentBuild.result = 'FAILURE'
-        echo "Pipeline gagal: ${e.getMessage()}"
-        throw e
+pipeline {
+  agent any
+  environment {
+    IMAGE_NAME = 'arilix/simple-app'
+    REGISTRY_CREDENTIALS = 'dockerhub-credentials'
+  }
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+    stage('Build') { steps { bat 'echo "Build di Windows"' } }
+    stage('Build Docker Image') {
+      steps { bat "docker build -t %IMAGE_NAME%:%BUILD_NUMBER% ." }
     }
+    stage('Push Docker Image') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIALS,
+            usernameVariable: 'USER', passwordVariable: 'PASS')]) {
+          bat 'docker login -u %USER% -p %PASS%'
+          bat "docker push %IMAGE_NAME%:%BUILD_NUMBER%"
+          bat "docker tag %IMAGE_NAME%:%BUILD_NUMBER% %IMAGE_NAME%:latest"
+          bat "docker push %IMAGE_NAME%:latest"
+        }
+      }
+    }
+  }
 }
