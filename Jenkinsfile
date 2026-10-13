@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = 'arilix/simple-app'
+        IMAGE_NAME = 'riset321/simple-app'
         REGISTRY_CREDENTIALS = 'dockerhub-credentials'
         DOCKER_EXE = 'C:\\Users\\HP\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
     }
